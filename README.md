@@ -1,45 +1,47 @@
 # Swide
 
-Sélecteur de projets Cursor pour macOS, piloté au clavier. `⌥ Space` ouvre un panneau en verre au-dessus de tout, sur l'écran où se trouve la souris :
+Keyboard-driven project switcher for Cursor on macOS. `⌥ Space` opens a glass panel above everything, on the screen under the mouse pointer:
 
-- en haut, les projets récents de Cursor ; la recherche floue couvre tout `~/dev` ;
-- en bas, toutes les fenêtres Cursor ouvertes, tous écrans et bureaux confondus, de la plus récente à la plus ancienne, avec l'état de Claude dans chacune.
+- top: recent Cursor projects; fuzzy search covers all of `~/dev`;
+- bottom: every open Cursor window, across all screens and desktops, most recently used first, with the Claude status of each.
 
-Au plus 3 fenêtres Cursor : ouvrir un 4ᵉ projet ferme celle utilisée il y a le plus longtemps, sauf si elle est épinglée ou si Claude y travaille. La fenêtre visée est grisée (« Sera fermé ») avant validation.
+At most 3 Cursor windows: opening a 4th project closes the least recently used one, unless it is pinned or Claude is working in it. The window about to close is greyed out ("Sera fermé") before you confirm.
+
+The UI is in French.
 
 ## Installation
 
-Prérequis : macOS 26, Command Line Tools (Swift 6.2+), Cursor dans `/Applications`.
+Requirements: macOS 26, Command Line Tools (Swift 6.2+), Cursor in `/Applications`.
 
 ```sh
-scripts/create-signing-cert.sh   # une fois : garde les permissions macOS d'un build à l'autre
-scripts/build.sh install         # construit, copie dans ~/Applications et lance
+scripts/create-signing-cert.sh   # once: keeps macOS permissions across rebuilds
+scripts/build.sh install         # builds, copies to ~/Applications and launches
 ```
 
-Puis, depuis l'icône Swide de la barre de menus (section Configuration) :
+Then, from the Swide menu bar icon (Configuration section):
 
-1. **Accessibilité** : obligatoire pour déplacer et agrandir les fenêtres Cursor.
-2. **Extension Cursor swide-bridge** : signale chaque fenêtre à Swide (dossier, focus) et permet de la fermer.
-3. **Hooks Claude Code** : ajoute à `~/.claude/settings.json` les hooks qui remontent l'état de Claude (sauvegarde dans `settings.json.swide-backup`).
-4. **Aperçus des fenêtres** (facultatif) : demande la permission Enregistrement de l'écran.
+1. **Accessibility**: required to move and maximize Cursor windows.
+2. **Cursor extension swide-bridge**: reports each window to Swide (folder, focus) and lets Swide close it.
+3. **Claude Code hooks**: adds the hooks that report Claude's status to `~/.claude/settings.json` (backup in `settings.json.swide-backup`).
+4. **Window previews** (optional): requests the Screen Recording permission.
 
-## Clavier
+## Keyboard
 
-| Touche | Action |
+| Key | Action |
 |---|---|
-| `⌥ Space` | Ouvrir / fermer Swide |
-| lettres | Filtrer les projets |
-| `↑ ↓ ← →` | Naviguer |
-| `↵` | Ouvrir le projet ou basculer sur la fenêtre |
-| `⌘ ↵` | Ouvrir sans fermer de fenêtre |
-| `⌘ 1`–`⌘ 9` | Basculer sur la fenêtre n |
-| `⌘ ⌫` | Fermer la fenêtre sélectionnée |
-| `⌘ P` | Épingler / désépingler la fenêtre sélectionnée |
-| `esc` | Effacer la recherche, puis quitter |
+| `⌥ Space` | Open / close Swide |
+| letters | Filter projects |
+| `↑ ↓ ← →` | Navigate |
+| `↵` | Open the project or switch to the window |
+| `⌘ ↵` | Open without closing any window |
+| `⌘ 1`–`⌘ 9` | Switch to window n |
+| `⌘ ⌫` | Close the selected window |
+| `⌘ P` | Pin / unpin the selected window |
+| `esc` | Clear the search, then dismiss |
 
 ## Configuration
 
-`~/.config/swide/config.json`, créé au premier lancement (relu à chaque ouverture du panneau, sauf `hotkey` qui demande un relancement) :
+`~/.config/swide/config.json`, created on first launch. It is re-read every time the panel opens, except `hotkey`, which needs a relaunch:
 
 ```json
 {
@@ -50,23 +52,23 @@ Puis, depuis l'icône Swide de la barre de menus (section Configuration) :
 }
 ```
 
-## Fonctionnement
+## How it works
 
-| Besoin | Source |
+| Need | Source |
 |---|---|
-| Projets récents | `state.vscdb` de Cursor (`history.recentlyOpenedPathsList`) |
-| Projets de `~/dev` | Scan : enfants directs des dossiers de groupe, dossiers de premier niveau qui sont des dépôts git ou sans sous-dossier, dépôts git jusqu'à 4 niveaux |
-| Fenêtres ouvertes | Extension `bridge/` : un fichier JSON par fenêtre dans `~/Library/Application Support/Swide/windows`, un socket Unix pour `close` |
-| État de Claude | `Swide --claude-hook`, appelé par les hooks Claude Code, écrit `~/Library/Application Support/Swide/claude/<session>.json` |
-| Placement | `NSWorkspace.open` sur le dossier (Cursor focalise la fenêtre existante), puis API d'accessibilité pour agrandir sur l'écran actif |
+| Recent projects | Cursor's `state.vscdb` (`history.recentlyOpenedPathsList`) |
+| Projects in `~/dev` | Scan: direct children of group folders, top-level folders that are git repos or have no subfolders, git repos up to 4 levels deep |
+| Open windows | `bridge/` extension: one JSON file per window in `~/Library/Application Support/Swide/windows`, a Unix socket for `close` |
+| Claude status | `Swide --claude-hook`, called by Claude Code hooks, writes `~/Library/Application Support/Swide/claude/<session>.json` |
+| Placement | `NSWorkspace.open` on the folder (Cursor focuses the existing window), then the Accessibility API maximizes it on the active screen |
 
-## Développement
+## Development
 
 ```sh
-scripts/test.sh                       # tests de SwideCore (Swift Testing)
-swift build && .build/debug/Swide --snapshot /tmp/panel.png   # rendu du panneau sans permissions
+scripts/test.sh                       # SwideCore tests (Swift Testing)
+swift build && .build/debug/Swide --snapshot /tmp/panel.png   # render the panel without permissions
 ```
 
-- `Sources/SwideCore` : logique pure (recherche, index des projets, règle des fenêtres, état de Claude).
-- `Sources/Swide` : app AppKit/SwiftUI (raccourci, panneau, placement des fenêtres, intégrations).
-- `bridge/` : extension Cursor, en JavaScript sans dépendance, empaquetée par `scripts/package-bridge.sh`.
+- `Sources/SwideCore`: pure logic (search, project index, window rule, Claude status).
+- `Sources/Swide`: AppKit/SwiftUI app (hotkey, panel, window placement, integrations).
+- `bridge/`: Cursor extension, dependency-free JavaScript, packaged by `scripts/package-bridge.sh`.
