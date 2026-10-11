@@ -1,0 +1,13 @@
+{
+  "name": "swide-bridge",
+  "displayName": "Swide Bridge",
+  "description": "Reports this Cursor window to Swide (folder, focus) and lets Swide close it.",
+  "version": "0.1.0",
+  "publisher": "swide",
+  "license": "MIT",
+  "engines": { "vscode": "^1.80.0" },
+  "extensionKind": ["ui"],
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js"
+}
