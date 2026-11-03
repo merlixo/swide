@@ -18,6 +18,8 @@ scripts/create-signing-cert.sh   # once: keeps macOS permissions across rebuilds
 scripts/build.sh install         # builds, copies to ~/Applications and launches
 ```
 
+On first launch, Swide turns on launch at login. Turn it off from the menu (Lancer à la connexion) and it stays off.
+
 Then, from the Swide menu bar icon (Configuration section):
 
 1. **Accessibility**: required to move and maximize Cursor windows.

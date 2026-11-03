@@ -15,10 +15,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.bootstrap()
         registerHotKey()
         setupStatusItem()
+        enableLaunchAtLoginOnce()
 
         if !AXIsProcessTrusted() {
             let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
             AXIsProcessTrustedWithOptions(options)
+        }
+    }
+
+    /// Turns on launch at login the first time only, so a later opt-out from the menu sticks.
+    private func enableLaunchAtLoginOnce() {
+        let key = "launchAtLoginConfigured"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        do {
+            if SMAppService.mainApp.status != .enabled { try SMAppService.mainApp.register() }
+            UserDefaults.standard.set(true, forKey: key)
+            NSLog("Swide: launch at login enabled")
+        } catch {
+            NSLog("Swide: launch at login failed: \(error)")
         }
     }
 
