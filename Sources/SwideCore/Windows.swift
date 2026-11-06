@@ -9,14 +9,17 @@ public struct BridgeWindow: Codable, Equatable, Sendable {
     /// Epoch milliseconds of the last focus change (gained or lost); 0 if unknown.
     public let lastFocus: Double
     public let socket: String
+    /// `vscode.env.appName`; nil for bridges before 0.2.
+    public let app: String?
 
-    public init(id: String, pid: Int32, folders: [String], focused: Bool, lastFocus: Double, socket: String) {
+    public init(id: String, pid: Int32, folders: [String], focused: Bool, lastFocus: Double, socket: String, app: String? = nil) {
         self.id = id
         self.pid = pid
         self.folders = folders
         self.focused = focused
         self.lastFocus = lastFocus
         self.socket = socket
+        self.app = app
     }
 }
 

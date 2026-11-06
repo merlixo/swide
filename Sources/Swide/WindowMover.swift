@@ -2,26 +2,27 @@ import AppKit
 import ApplicationServices
 import SwideCore
 
-enum Cursor {
-    static let bundleID = "com.todesktop.230313mzl4w4u92"
-    static let cli = "/Applications/Cursor.app/Contents/Resources/app/bin/cursor"
-
-    static var running: NSRunningApplication? {
+extension IDE {
+    var running: NSRunningApplication? {
         NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first
     }
-    static var isFrontmost: Bool {
+    var isFrontmost: Bool {
         NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleID
     }
+    var appURL: URL? { NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) }
+    var isInstalled: Bool { appURL != nil }
+    var cli: URL? { appURL?.appendingPathComponent(cliPath) }
 }
 
-/// Opens or focuses a project in Cursor, then maximizes its window on the target screen.
+/// Opens or focuses a project in the IDE, then maximizes its window on the target screen.
 @MainActor
 final class WindowMover {
-    func focus(path: String, name: String, on screen: NSScreen?) async {
-        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Cursor.bundleID) else {
-            NSLog("Swide: Cursor not found")
+    func focus(path: String, name: String, ide: IDE, on screen: NSScreen?) async {
+        guard let appURL = ide.appURL else {
+            NSLog("Swide: \(ide.displayName) not found")
             return
         }
+        let coldStart = ide.running == nil
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
         do {
@@ -30,22 +31,27 @@ final class WindowMover {
             NSLog("Swide: open failed: \(error)")
             return
         }
-        guard AXIsProcessTrusted(), let screen else { return }
+        guard let screen else { return }
+        guard AXIsProcessTrusted() else {
+            NSLog("Swide: no Accessibility permission, window not placed")
+            Accessibility.promptOnce()
+            return
+        }
 
-        // New windows (or a cold Cursor start) can take a while to appear.
-        let deadline = Date().addingTimeInterval(15)
+        // New windows, and above all a cold start that restores the previous session, take a while.
+        let deadline = Date().addingTimeInterval(coldStart ? 40 : 15)
         var bridgeConfirmations = 0
         while Date() < deadline {
-            if let pid = Cursor.running?.processIdentifier, let window = AX.focusedWindow(pid: pid) {
+            if let pid = ide.running?.processIdentifier, let window = AX.focusedWindow(pid: pid) {
                 if AX.window(window, matches: path, name: name) {
-                    await place(window, on: screen)
+                    await place(window, ide: ide, on: screen)
                     return
                 }
                 // Title not recognizable: trust the bridge once it has reported focus for a few polls.
-                let bridgeFocused = BridgeRegistry.load().contains { $0.focused && $0.folders.contains(path) }
+                let bridgeFocused = BridgeRegistry.load().contains { ide.owns($0) && $0.focused && $0.folders.contains(path) }
                 bridgeConfirmations = bridgeFocused ? bridgeConfirmations + 1 : 0
                 if bridgeConfirmations >= 4 {
-                    await place(window, on: screen)
+                    await place(window, ide: ide, on: screen)
                     return
                 }
             }
@@ -54,20 +60,54 @@ final class WindowMover {
         NSLog("Swide: window for \(name) not found in time")
     }
 
-    private func place(_ window: AXUIElement, on screen: NSScreen) async {
+    private func place(_ window: AXUIElement, ide: IDE, on screen: NSScreen) async {
         if AX.bool(window, "AXFullScreen") == true {
             AX.set(window, "AXFullScreen", kCFBooleanFalse)
             try? await Task.sleep(for: .milliseconds(900))
         }
         let target = AX.topLeftFrame(screen.visibleFrame)
-        if AX.frame(window) != target {
-            // Position, size, position again: crossing screens can clamp the first move.
-            AX.setPosition(window, target.origin)
-            AX.setSize(window, target.size)
-            AX.setPosition(window, target.origin)
-        }
+        AX.move(window, to: target)
         AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-        Cursor.running?.activate()
+        ide.running?.activate()
+
+        // Activation switches to the Space the window came from, on its old screen, and that
+        // can undo a move across screens: re-apply until the window stays on the target screen.
+        for _ in 0..<12 {
+            try? await Task.sleep(for: .milliseconds(100))
+            guard let frame = AX.frame(window) else { return }
+            if AX.isPlaced(frame, at: target) { return }
+            AX.move(window, to: target)
+            AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        }
+        NSLog("Swide: could not keep the window on the target screen")
+    }
+}
+
+/// The system Accessibility prompt, shown only when it is really needed.
+@MainActor
+enum Accessibility {
+    private static var promptedThisLaunch = false
+
+    /// Shows the system prompt unless already trusted. Returns whether trusted.
+    @discardableResult
+    static func prompt() -> Bool {
+        AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+    }
+
+    /// First launch only. Later launches don't check: at login, the permission can briefly
+    /// read as missing while it is granted, which showed a needless prompt.
+    static func promptOnFirstLaunch() {
+        let key = "accessibilityPromptShown"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        if !AXIsProcessTrusted() { promptOnce() }
+    }
+
+    /// When a window can't be placed for lack of permission; at most once per launch.
+    static func promptOnce() {
+        guard !promptedThisLaunch else { return }
+        promptedThisLaunch = true
+        prompt()
     }
 }
 
@@ -122,6 +162,19 @@ enum AX {
     static func setSize(_ window: AXUIElement, _ size: CGSize) {
         var s = size
         if let v = AXValueCreate(.cgSize, &s) { set(window, kAXSizeAttribute, v) }
+    }
+
+    static func move(_ window: AXUIElement, to target: CGRect) {
+        guard frame(window) != target else { return }
+        // Position, size, position again: crossing screens can clamp the first move.
+        setPosition(window, target.origin)
+        setSize(window, target.size)
+        setPosition(window, target.origin)
+    }
+
+    /// Same origin, give or take rounding. Size isn't checked: an app may enforce its own limits.
+    static func isPlaced(_ frame: CGRect, at target: CGRect) -> Bool {
+        abs(frame.minX - target.minX) <= 2 && abs(frame.minY - target.minY) <= 2
     }
 
     /// AppKit uses a bottom-left origin; Accessibility uses the primary screen's top-left.

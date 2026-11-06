@@ -7,14 +7,14 @@ import SwideCore
 enum Thumbnails {
     static var enabled: Bool { CGPreflightScreenCaptureAccess() }
 
-    static func capture(_ targets: [(path: String, name: String)]) async -> [String: NSImage] {
+    static func capture(_ targets: [(path: String, name: String)], ide: IDE) async -> [String: NSImage] {
         guard enabled, !targets.isEmpty,
               let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
         else { return [:] }
 
         var images: [String: NSImage] = [:]
         for window in content.windows
-        where window.owningApplication?.bundleIdentifier == Cursor.bundleID && window.frame.width > 400 {
+        where window.owningApplication?.bundleIdentifier == ide.bundleID && window.frame.width > 400 {
             guard let title = window.title,
                   let target = targets.first(where: { WindowTitle.matches(title, name: $0.name) }),
                   images[target.path] == nil else { continue }

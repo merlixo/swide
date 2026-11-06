@@ -17,7 +17,7 @@ cat > "$STAGE/extension.vsixmanifest" <<EOF
   <Metadata>
     <Identity Language="en-US" Id="swide-bridge" Version="$VERSION" Publisher="swide" />
     <DisplayName>Swide Bridge</DisplayName>
-    <Description xml:space="preserve">Reports this Cursor window to Swide.</Description>
+    <Description xml:space="preserve">Reports this editor window to Swide.</Description>
     <Categories>Other</Categories>
     <Properties>
       <Property Id="Microsoft.VisualStudio.Code.Engine" Value="^1.80.0" />

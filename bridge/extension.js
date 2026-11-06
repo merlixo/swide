@@ -1,4 +1,4 @@
-// Writes one JSON file per Cursor window for Swide, and listens on a Unix
+// Writes one JSON file per editor window (Cursor or VS Code) for Swide, and listens on a Unix
 // socket for commands ("close", "ping").
 const vscode = require('vscode');
 const fs = require('fs');
@@ -58,7 +58,10 @@ function activate(context) {
   socketPath = path.join(SOCKET_DIR, `${id}.sock`);
 
   const focused = vscode.window.state.focused;
-  state = { id, pid: process.pid, folders: [], focused, lastFocus: focused ? Date.now() : 0, socket: socketPath };
+  state = {
+    id, pid: process.pid, app: vscode.env.appName, folders: [], focused,
+    lastFocus: focused ? Date.now() : 0, socket: socketPath,
+  };
 
   try { fs.unlinkSync(socketPath); } catch {}
   server = net.createServer((conn) => {

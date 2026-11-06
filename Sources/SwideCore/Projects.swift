@@ -66,23 +66,39 @@ public enum ProjectScanner {
     }
 }
 
-public enum CursorRecents {
-    /// Folder paths from Cursor's "recently opened" list, most recent first.
-    public static func load(dbPath: String = Paths.cursorStateDB) -> [String] {
+public enum RecentFolders {
+    /// Folder paths from the IDE's "recently opened" list, most recent first.
+    public static func load(dbPath: String) -> [String] {
+        if let paths = read(dbPath, flags: SQLITE_OPEN_READONLY) { return paths }
+        // The DB is in WAL mode: once the IDE has quit, its -wal/-shm files are gone and a
+        // read-only connection can't recreate them. Nothing writes then, so immutable is safe.
+        let uri = URL(fileURLWithPath: dbPath).absoluteString + "?immutable=1"
+        return read(uri, flags: SQLITE_OPEN_READONLY | SQLITE_OPEN_URI) ?? []
+    }
+
+    /// nil when the database can't be read.
+    private static func read(_ path: String, flags: Int32) -> [String]? {
         var db: OpaquePointer?
-        guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+        guard sqlite3_open_v2(path, &db, flags, nil) == SQLITE_OK else {
             sqlite3_close(db)
-            return []
+            return nil
         }
         defer { sqlite3_close(db) }
         sqlite3_busy_timeout(db, 200)
 
         var stmt: OpaquePointer?
         let sql = "SELECT value FROM ItemTable WHERE key = 'history.recentlyOpenedPathsList'"
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(stmt) }
-        guard sqlite3_step(stmt) == SQLITE_ROW, let bytes = sqlite3_column_blob(stmt, 0) else { return [] }
-        return parse(Data(bytes: bytes, count: Int(sqlite3_column_bytes(stmt, 0))))
+        switch sqlite3_step(stmt) {
+        case SQLITE_ROW:
+            guard let bytes = sqlite3_column_blob(stmt, 0) else { return [] }
+            return parse(Data(bytes: bytes, count: Int(sqlite3_column_bytes(stmt, 0))))
+        case SQLITE_DONE:
+            return []
+        default:
+            return nil
+        }
     }
 
     public static func parse(_ data: Data) -> [String] {

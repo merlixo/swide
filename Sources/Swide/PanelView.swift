@@ -11,6 +11,8 @@ enum Layout {
     static let thumbnailHeight: CGFloat = 176
     static let cardSpacing: CGFloat = 10
     static var maxCardWidth: CGFloat { (width - padding * 2 - cardSpacing * 2) / 3 }
+    /// Coordinate space of the whole panel, for hit-testing a press-drag-release.
+    static let space = "panel"
 }
 
 struct PanelView: View {
@@ -26,13 +28,14 @@ struct PanelView: View {
                     : "\(model.hits.count) projet\(model.hits.count > 1 ? "s" : "")")
             TileGrid(model: model)
                 .frame(height: Layout.tileRowHeight * 2 + 4, alignment: .top)
-            SectionHeader(title: "Ouverts dans Cursor", trailing: "du plus récent au plus ancien")
+            SectionHeader(title: "Ouverts dans \(model.ide.displayName)", trailing: "du plus récent au plus ancien")
             WindowRow(model: model)
                 .frame(maxHeight: .infinity, alignment: .top)
             BottomBar(model: model)
         }
         .padding(Layout.padding)
         .frame(width: Layout.width, height: Layout.height)
+        .coordinateSpace(.named(Layout.space))
     }
 }
 
@@ -49,7 +52,17 @@ struct SearchBar: View {
                     .foregroundStyle(.secondary)
                 SearchField(model: model)
                     .frame(height: 28)
-                CapacityGauge(count: model.windows.count, max: model.config.maxWindows)
+                IDEPicker(model: model)
+                CapacityGauge(count: model.windows.count, max: model.config.maxWindows, ide: model.ide)
+                Button { model.showMenu?() } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 26, height: 26)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Menu Swide : IDE, extension, permissions…")
             }
             .padding(.horizontal, 10)
             .padding(.top, 6)
@@ -94,9 +107,29 @@ struct SearchField: NSViewRepresentable {
     }
 }
 
+/// Cursor / VS Code, among the installed ones.
+struct IDEPicker: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        let installed = IDE.allCases.filter { $0.isInstalled || $0 == model.ide }
+        if installed.count > 1 {
+            Picker("IDE", selection: Binding(get: { model.ide }, set: { model.setIDE($0) })) {
+                ForEach(installed, id: \.self) { Text($0.displayName).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.small)
+            .fixedSize()
+            .help("IDE dans lequel ouvrir les projets")
+        }
+    }
+}
+
 struct CapacityGauge: View {
     let count: Int
     let max: Int
+    let ide: IDE
 
     var body: some View {
         HStack(spacing: 8) {
@@ -112,7 +145,7 @@ struct CapacityGauge: View {
                 .monospacedDigit()
                 .foregroundStyle(count > max ? Color.orange : Color.secondary)
         }
-        .help("Fenêtres Cursor ouvertes / maximum")
+        .help("Fenêtres \(ide.displayName) ouvertes / maximum")
     }
 }
 
@@ -152,17 +185,17 @@ struct TileGrid: View {
         } else {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: AppModel.columns), spacing: 4) {
                 ForEach(hits) { hit in
+                    let item = Selection.project(hit.project.path)
                     TileView(
                         hit: hit, isOpen: open.contains(hit.project.path),
                         lastActive: model.lastActive(hit.project.path),
-                        selected: model.selection == .project(hit.project.path))
-                    .onHover { inside in
-                        if inside && model.mouseArmed { model.selection = .project(hit.project.path) }
+                        selected: model.selection == item)
+                    .overlay(alignment: .bottom) {
+                        if model.pendingOpen == item {
+                            AutoOpenBar(duration: model.config.autoOpenDelay).padding(.horizontal, 14).padding(.bottom, 3)
+                        }
                     }
-                    .onTapGesture {
-                        model.selection = .project(hit.project.path)
-                        model.activateSelection(force: NSEvent.modifierFlags.contains(.command))
-                    }
+                    .modifier(PointerTarget(model: model, item: item))
                 }
             }
         }
@@ -254,6 +287,38 @@ struct SelectionBackground: View {
     }
 }
 
+/// Hover selects; press, drag and release opens whatever is under the pointer on release.
+struct PointerTarget: ViewModifier {
+    let model: AppModel
+    let item: Selection
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Layout.space)) } action: { model.itemFrames[item] = $0 }
+            .onHover { inside in if inside { model.hover(item) } }
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .named(Layout.space))
+                    .onChanged { model.pointerDragged(to: $0.location) }
+                    .onEnded { model.pointerReleased(at: $0.location) })
+    }
+}
+
+/// Fills up while a keyboard selection waits to open by itself.
+struct AutoOpenBar: View {
+    let duration: Double
+    @State private var progress = 0.0
+
+    var body: some View {
+        GeometryReader { g in
+            Capsule()
+                .fill(Color.accentColor)
+                .frame(width: g.size.width * progress, height: 2)
+        }
+        .frame(height: 2)
+        .onAppear { withAnimation(.linear(duration: duration)) { progress = 1 } }
+    }
+}
+
 // MARK: Open windows
 
 struct WindowRow: View {
@@ -261,9 +326,9 @@ struct WindowRow: View {
 
     var body: some View {
         if model.windows.isEmpty {
-            Text(Integrations.bridgeInstalled
-                 ? "Aucune fenêtre Cursor ouverte."
-                 : "Installe l'extension Cursor depuis le menu Swide pour voir tes fenêtres ouvertes.")
+            Text(Integrations.bridgeInstalled(in: model.ide)
+                 ? "Aucune fenêtre \(model.ide.displayName) ouverte."
+                 : "Installe l'extension \(model.ide.displayName) depuis le menu ⚙︎ (en haut à droite) pour voir tes fenêtres ouvertes.")
                 .font(.system(size: 13.5))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)
@@ -272,22 +337,22 @@ struct WindowRow: View {
             let doomed = model.doomedWindowID
             HStack(alignment: .top, spacing: Layout.cardSpacing) {
                 ForEach(Array(model.windows.enumerated()), id: \.element.id) { index, window in
+                    let item = Selection.window(window.id)
                     WindowCard(
                         window: window, index: index,
                         isFront: index == 0 && window.focused,
                         thumbnail: model.thumbnails[window.path],
-                        selected: model.selection == .window(window.id),
+                        selected: model.selection == item,
                         doomed: doomed == window.id,
                         onPin: { model.togglePin(window) },
                         onClose: { model.close(window) })
+                    .overlay(alignment: .bottom) {
+                        if model.pendingOpen == item {
+                            AutoOpenBar(duration: model.config.autoOpenDelay).padding(.horizontal, 18).padding(.bottom, 4)
+                        }
+                    }
                     .frame(maxWidth: Layout.maxCardWidth)
-                    .onHover { inside in
-                        if inside && model.mouseArmed { model.selection = .window(window.id) }
-                    }
-                    .onTapGesture {
-                        model.selection = .window(window.id)
-                        model.activateSelection(force: false)
-                    }
+                    .modifier(PointerTarget(model: model, item: item))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

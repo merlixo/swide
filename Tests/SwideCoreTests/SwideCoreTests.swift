@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import Testing
 @testable import SwideCore
 
@@ -52,7 +53,31 @@ import Testing
 
     @Test func parsesCursorRecents() {
         let json = #"{"entries":[{"folderUri":"file:///Users/me/dev/work/a%20b"},{"fileUri":"file:///x.txt"},{"folderUri":"vscode-remote://ssh/x"}]}"#
-        #expect(CursorRecents.parse(Data(json.utf8)) == ["/Users/me/dev/work/a b"])
+        #expect(RecentFolders.parse(Data(json.utf8)) == ["/Users/me/dev/work/a b"])
+    }
+
+    /// Regression: with the IDE closed, its WAL database has no -wal/-shm and a plain
+    /// read-only open fails, which emptied the panel at login.
+    @Test func readsRecentsWhileIDEIsClosed() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("swide-db-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("state.vscdb").path
+
+        var db: OpaquePointer?
+        #expect(sqlite3_open(path, &db) == SQLITE_OK)
+        let json = #"{"entries":[{"folderUri":"file:///d/dev/a"}]}"#
+        let sql = "PRAGMA journal_mode=wal; CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB);"
+            + "INSERT INTO ItemTable VALUES ('history.recentlyOpenedPathsList', '\(json)');"
+        #expect(sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(db)
+        for suffix in ["-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) }
+
+        #expect(RecentFolders.load(dbPath: path) == ["/d/dev/a"])
+    }
+
+    @Test func missingDatabaseGivesNoRecents() {
+        #expect(RecentFolders.load(dbPath: "/nonexistent/state.vscdb").isEmpty)
     }
 
     @Test func groups() {
@@ -159,7 +184,50 @@ import Testing
         let c = try JSONDecoder().decode(Config.self, from: Data(#"{"maxWindows":4,"protect":{"pinned":false}}"#.utf8))
         #expect(c.maxWindows == 4)
         #expect(c.hotkey == "option+space")
+        #expect(c.ide == .cursor)
+        #expect(c.autoOpenDelay == 0.8)
         #expect(c.protect.pinned == false)
         #expect(c.protect.claudeWorking == true)
+    }
+
+    @Test func ideAndDelay() throws {
+        let c = try JSONDecoder().decode(Config.self, from: Data(#"{"ide":"vscode","autoOpenDelay":0}"#.utf8))
+        #expect(c.ide == .vscode)
+        #expect(c.autoOpenDelay == 0)
+    }
+
+    @Test func unknownIDEFallsBackToDefault() throws {
+        let c = try JSONDecoder().decode(Config.self, from: Data(#"{"ide":"zed","maxWindows":2}"#.utf8))
+        #expect(c.ide == .cursor)
+        #expect(c.maxWindows == 2)
+    }
+
+    @Test func saveRoundTrips() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("swide-config-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        var c = Config()
+        c.ide = .vscode
+        c.save(to: url)
+        #expect(Config.load(from: url) == c)
+    }
+}
+
+@Suite struct IDETests {
+    func window(app: String?) -> BridgeWindow {
+        BridgeWindow(id: "x", pid: 1, folders: ["/p"], focused: false, lastFocus: 0, socket: "", app: app)
+    }
+
+    @Test func windowsBelongToTheirIDE() {
+        #expect(IDE.cursor.owns(window(app: "Cursor")))
+        #expect(!IDE.cursor.owns(window(app: "Visual Studio Code")))
+        #expect(IDE.vscode.owns(window(app: "Visual Studio Code")))
+        #expect(!IDE.vscode.owns(window(app: "Cursor")))
+    }
+
+    @Test func oldBridgesAreCursor() throws {
+        let json = #"{"id":"a","pid":1,"folders":[],"focused":false,"lastFocus":0,"socket":"s"}"#
+        let w = try JSONDecoder().decode(BridgeWindow.self, from: Data(json.utf8))
+        #expect(IDE.cursor.owns(w))
+        #expect(!IDE.vscode.owns(w))
     }
 }

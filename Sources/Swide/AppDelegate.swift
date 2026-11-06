@@ -12,15 +12,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = PanelController(model: model)
         model.panel = panel
+        model.showMenu = { [weak self] in self?.popUpMenu() }
         model.bootstrap()
         registerHotKey()
         setupStatusItem()
         enableLaunchAtLoginOnce()
-
-        if !AXIsProcessTrusted() {
-            let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-            AXIsProcessTrustedWithOptions(options)
-        }
+        Accessibility.promptOnFirstLaunch()
     }
 
     /// Turns on launch at login the first time only, so a later opt-out from the menu sticks.
@@ -66,16 +63,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = menu
     }
 
+    private func popUpMenu() {
+        let menu = NSMenu()
+        menu.delegate = self
+        menuNeedsUpdate(menu)
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         menu.addItem(item("Ouvrir Swide", #selector(menuToggle)))
+        menu.addItem(.separator())
+
+        let ide = model.config.ide
+        let ideMenu = NSMenu()
+        for choice in IDE.allCases {
+            let title = choice.isInstalled ? choice.displayName : "\(choice.displayName) (non installé)"
+            let entry = item(title, #selector(selectIDE(_:)), done: choice == ide)
+            entry.representedObject = choice.rawValue
+            entry.isEnabled = choice.isInstalled
+            ideMenu.addItem(entry)
+        }
+        let ideItem = NSMenuItem(title: "IDE : \(ide.displayName)", action: nil, keyEquivalent: "")
+        ideItem.submenu = ideMenu
+        menu.addItem(ideItem)
         menu.addItem(.separator())
 
         let setup = NSMenuItem(title: "Configuration", action: nil, keyEquivalent: "")
         setup.isEnabled = false
         menu.addItem(setup)
         menu.addItem(item("Accessibilité (obligatoire)", #selector(openAccessibility), done: AXIsProcessTrusted()))
-        menu.addItem(item("Extension Cursor swide-bridge", #selector(installBridge), done: Integrations.bridgeInstalled))
+        menu.addItem(item("Extension \(ide.displayName) swide-bridge", #selector(installBridge), done: Integrations.bridgeInstalled(in: ide)))
         menu.addItem(item("Hooks Claude Code", #selector(installHooks), done: Integrations.hooksInstalled))
         menu.addItem(item("Aperçus des fenêtres (Enregistrement de l'écran)", #selector(enableThumbnails), done: Thumbnails.enabled))
         menu.addItem(.separator())
@@ -95,19 +113,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func menuToggle() { toggle() }
 
+    @objc private func selectIDE(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let ide = IDE(rawValue: raw) else { return }
+        model.setIDE(ide)
+        if !Integrations.bridgeInstalled(in: ide) {
+            alert("\(ide.displayName) sélectionné",
+                  "Installe l'extension swide-bridge (menu Swide › Configuration) pour voir les fenêtres \(ide.displayName) ouvertes.")
+        }
+    }
+
     @objc private func openAccessibility() {
-        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        if !AXIsProcessTrustedWithOptions(options) {
+        if !Accessibility.prompt() {
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
         }
     }
 
     @objc private func installBridge() {
+        let ide = model.config.ide
         Task.detached {
             do {
-                try Integrations.installBridge()
+                try Integrations.installBridge(in: ide)
                 await self.alert("Extension installée",
-                                 "Les fenêtres Cursor déjà ouvertes apparaîtront dans Swide après quelques secondes. Si ce n'est pas le cas, recharge-les (Developer: Reload Window).")
+                                 "Les fenêtres \(ide.displayName) déjà ouvertes apparaîtront dans Swide après quelques secondes. Si ce n'est pas le cas, recharge-les (Developer: Reload Window).")
             } catch {
                 await self.alert("Échec de l'installation", error.localizedDescription)
             }

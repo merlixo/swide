@@ -14,8 +14,11 @@ public struct Config: Codable, Equatable, Sendable {
     }
 
     public var hotkey = "option+space"
+    public var ide = IDE.cursor
     public var maxWindows = 3
     public var searchRoot = "~/dev"
+    /// Seconds before a keyboard selection opens on its own; 0 waits for ↵.
+    public var autoOpenDelay = 0.8
     public var protect = Protect()
 
     public init() {}
@@ -23,8 +26,11 @@ public struct Config: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? hotkey
+        // An unknown IDE falls back to the default instead of rejecting the whole file.
+        ide = (try? c.decodeIfPresent(IDE.self, forKey: .ide)) ?? ide
         maxWindows = max(1, try c.decodeIfPresent(Int.self, forKey: .maxWindows) ?? maxWindows)
         searchRoot = try c.decodeIfPresent(String.self, forKey: .searchRoot) ?? searchRoot
+        autoOpenDelay = max(0, try c.decodeIfPresent(Double.self, forKey: .autoOpenDelay) ?? autoOpenDelay)
         protect = try c.decodeIfPresent(Protect.self, forKey: .protect) ?? protect
     }
 
@@ -34,11 +40,15 @@ public struct Config: Codable, Equatable, Sendable {
             return config
         }
         if !FileManager.default.fileExists(atPath: url.path) {
-            let e = JSONEncoder()
-            e.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-            try? e.encode(Config()).writeAtomically(to: url)
+            Config().save(to: url)
         }
         return Config()
+    }
+
+    public func save(to url: URL = Paths.configFile) {
+        let e = JSONEncoder()
+        e.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        try? e.encode(self).writeAtomically(to: url)
     }
 }
 

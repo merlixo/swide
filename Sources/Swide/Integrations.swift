@@ -1,14 +1,13 @@
 import Foundation
 import SwideCore
 
-/// One-time setup of the Cursor bridge extension and the Claude Code hooks.
+/// One-time setup of the IDE bridge extension and the Claude Code hooks.
 enum Integrations {
     static let bridgeID = "swide.swide-bridge"
     static var claudeSettings: URL { Paths.home.appendingPathComponent(".claude/settings.json") }
 
-    static var bridgeInstalled: Bool {
-        let dir = Paths.home.appendingPathComponent(".cursor/extensions")
-        let items = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+    static func bridgeInstalled(in ide: IDE) -> Bool {
+        let items = (try? FileManager.default.contentsOfDirectory(atPath: ide.extensionsDir.path)) ?? []
         return items.contains { $0.hasPrefix(bridgeID + "-") }
     }
 
@@ -21,12 +20,15 @@ enum Integrations {
         "\"\(Bundle.main.executablePath ?? "Swide")\" --claude-hook"
     }
 
-    static func installBridge() throws {
+    static func installBridge(in ide: IDE) throws {
+        guard let cli = ide.cli else {
+            throw SetupError("\(ide.displayName) est introuvable.")
+        }
         guard let vsix = Bundle.main.url(forResource: "swide-bridge", withExtension: "vsix") else {
             throw SetupError("swide-bridge.vsix est absent du bundle. Lance scripts/build.sh.")
         }
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: Cursor.cli)
+        process.executableURL = cli
         process.arguments = ["--install-extension", vsix.path, "--force"]
         let pipe = Pipe()
         process.standardOutput = pipe

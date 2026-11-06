@@ -73,7 +73,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         panel.orderOut(nil)
     }
 
-    private func focusSearch() {
+    func focusSearch() {
         if let field = model.searchField {
             panel.makeFirstResponder(field)
         } else {

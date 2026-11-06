@@ -11,10 +11,6 @@ public enum Paths {
 
     public static var configFile: URL { home.appendingPathComponent(".config/swide/config.json") }
 
-    public static var cursorStateDB: String {
-        home.appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb").path
-    }
-
     public static func expand(_ path: String) -> String {
         URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).standardizedFileURL.path
     }
